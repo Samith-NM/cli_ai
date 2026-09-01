@@ -15,6 +15,8 @@ pub struct Cli{
 
 #[derive(Subcommand)]
 
+#[derive(Parser,Debug)]
+#[command(name = "cli_ai",version,about)]
 pub enum Commands{
     Run{
 
@@ -34,9 +36,7 @@ pub enum Commands{
     #[arg(long,default_value = "cli_ai_bugreports")]
     report_dir:String,
 
-    #[arg(long,default_value_t = 5)]
-    context:usize,
-
+   
     #[arg(long)]
     no_reports:bool,
     
@@ -52,7 +52,7 @@ fn main(){
     let cli = Cli::parse();
     match &cli.command{
 
-        Commands::Run{cli_ai} => {
+        Commands::Run { cli_ai, .. } => {
 
             match fs::read_to_string(cli_ai) {
 

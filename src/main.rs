@@ -1,88 +1,88 @@
-use color_eyre::Result;
-use ratatui::prelude::Widget;
-use ratatui::{
-    DefaultTerminal,
-    crossterm::event::{self, Event, KeyCode},
-    widgets::Paragraph,
-};
+mod cli;
+mod context;
+mod gateway;
+mod process;
+mod trender;
+mod autodocumentation;
 
-fn main() -> Result<()> {
-    color_eyre::install()?;
 
-    let terminal = ratatui::init();
-    let result = run(terminal);
-    ratatui::restore();
-    result
-}
+use clap::Parser;
+use cli::{Cli,Commands};
 
-fn run(mut terminal: DefaultTerminal) -> Result<()> {
-    let mut text = String::new();
-    let mut cursor = 0usize;
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
 
-    terminal.show_cursor()?;
-
-    loop {
-        terminal.clear()?;
-
-        terminal.draw(|frame| {
-            let area = frame.area();
-            let paragraph = Paragraph::new(text.as_str());
-            paragraph.render(area, frame.buffer_mut());
-
-            let mut row = 0usize;
-            let mut col = 0usize;
-            let mut count = 0usize;
-            for ch in text.chars() {
-                if count >= cursor {
-                    break;
-                }
-                count += 1;
-                if ch == '\n' {
-                    row += 1;
-                    col = 0;
-                } else {
-                    col += 1;
-                    if col >= area.width as usize {
-                        row += 1;
-                        col = 0;
-                    }
-                }
-            }
-
-            let x = col.min(area.width.saturating_sub(1) as usize) as u16;
-            let y = row.min(area.height.saturating_sub(1) as usize) as u16;
-            frame.set_cursor_position((x, y));
-        })?;
-
-        match event::read()? {
-            Event::Key(key) => match key.code {
-                KeyCode::Esc => break,
-                KeyCode::Backspace => {
-                    if cursor > 0 {
-                        cursor -= 1;
-                        text.remove(cursor);
-                    }
-                }
-                KeyCode::Left => {
-                    cursor = cursor.saturating_sub(1);
-                }
-                KeyCode::Right => {
-                    cursor = (cursor + 1).min(text.len());
-                }
-                KeyCode::Enter => {
-                    text.insert(cursor, '\n');
-                    cursor += 1;
-                }
-                KeyCode::Char(c) => {
-                    text.insert(cursor, c);
-                    cursor += c.len_utf8();
-                }
-                _ => {}
-            },
-            _ => {}
+    match cli.command() {
+        Commands::Run { cli_ai, args, context, mock, no_reports, report_dir, timeout } => {
+            run(&file, &args, context, mock, !no_report, &report_dir, timeout).await?
         }
     }
 
-    terminal.hide_cursor()?;
+    Ok(())
+}
+async fn run(
+    file: &str,
+    args: &[String],
+    context_lines: usize,
+    mock: bool,
+    write_report: bool,
+    report_dir: &str,
+    timeout_secs: u64,
+) -> anyhow::Result<()> {
+    println!("running {file} in sandbox...\n");
+
+    // 2. Sandbox Engine
+    let result = sandbox::run_sandboxed(file, args, timeout_secs).await?;
+
+    if !result.stdout.is_empty() {
+        println!("--- stdout ---\n{}", result.stdout);
+    }
+     let (signal_name, synthetic_stderr): (Option<String>, Option<String>) = if result.crashed() {
+        (result.signal_name().map(|s| s.to_string()), None)
+    } else if result.hung() {
+        let msg = format!(
+            "Process did not exit within {timeout_secs}s and was forcibly killed.\n\
+             This points to an infinite loop, deadlock, or a blocking wait \
+             (I/O, lock, channel) that never resolves — not a memory-fault crash.\n\n\
+             --- partial stdout captured before kill ---\n{}\n\
+             --- partial stderr captured before kill ---\n{}\n",
+            result.stdout, result.stderr
+        );
+        (Some(format!("TIMEOUT (no exit after {timeout_secs}s)")), Some(msg))
+    } else {
+        println!(
+            "exited normally (code {})",
+            result.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "unknown".into())
+        );
+        return Ok(());
+    };
+
+    println!(
+        "{}: {}\n",
+        if result.hung() { "hung" } else { "crashed" },
+        signal_name.as_deref().unwrap_or("unknown")
+    );
+let stderr_for_analysis = synthetic_stderr.as_deref().unwrap_or(&result.stderr);
+    let payload = context::build_payload(stderr_for_analysis, signal_name.as_deref(), context_lines)?;
+
+    if let (Some(f), Some(l)) = (&payload.file, payload.line) {
+        println!("  crash site: {f}:{l}");
+    }
+    if payload.references.len() > 1 {
+        println!("  ({} other referenced locations found)", payload.references.len() - 1);
+    }
+    if let Some(snippet) = &payload.extracted_snippet {
+        println!("\n{snippet}");
+    }
+
+    println!("\n--- AI analysis ---\n");
+    let explanation = llm::explain_crash(&payload, mock).await?;
+    if write_report {
+        let out_dir = std::path::Path::new(report_dir);
+        let path = report::write_report(file, &result, &payload, &explanation, out_dir)?;
+        println!("\nreport written to: {}", path.display());
+    }
+
     Ok(())
 }
