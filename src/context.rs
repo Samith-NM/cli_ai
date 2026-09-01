@@ -2,30 +2,28 @@ use anyhow::Result;
 use regex::Regex;
 use serde::Serialize;
 
-#[derive(Debug,Serialize,Clone)]
-pub struct Reference{
+#[derive(Debug, Serialize, Clone)]
+pub struct Reference {
     pub file: String,
-    pub line:usize,
-    pub snippet:Option<String>,
+    pub line: usize,
+    pub snippet: Option<String>,
 }
 
-#[derive(Debug,Serialize)]
-
-pub struct Contextpayload{
-    pub file:Option<String>,
-    pub line:Option<usize>,
-    pub extracctedsnippet:Option<String>,
-    pub references:Vec<Reference>,
-    pub rawstacktrace: String,
-    pub signalname:Option<String>,
-
-
+#[derive(Debug, Serialize, Clone)]
+pub struct Contextpayload {
+    pub file: Option<String>,
+    pub line: Option<usize>,
+    pub extracted_snippet: Option<String>,
+    pub references: Vec<Reference>,
+    pub raw_stack_trace: String,
+    pub signal_name: Option<String>,
 }
 
-fn extractall_location(stderr:&str) -> Vec<(String,usize)> {
+fn extract_all_locations(stderr: &str) -> Vec<(String, usize)> {
     let re = Regex::new(r"([\w./\-]+\.(?:c|cpp|cc|h|hpp|rs)):(\d+)").unwrap();
-     let mut seen = std::collections::HashSet::new();
+    let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
+
     for caps in re.captures_iter(stderr) {
         let file = caps[1].to_string();
         let line: usize = match caps[2].parse() {
@@ -36,16 +34,17 @@ fn extractall_location(stderr:&str) -> Vec<(String,usize)> {
             out.push((file, line));
         }
     }
-    out
 
+    out
 }
+
 fn extract_snippet(path: &str, line: usize, context: usize) -> Option<String> {
     let content = std::fs::read_to_string(path).ok()?;
     let lines: Vec<&str> = content.lines().collect();
     if line == 0 || line > lines.len() {
         return None;
     }
-    let idx = line - 1; // to 0-based
+    let idx = line - 1;
     let start = idx.saturating_sub(context);
     let end = (idx + context + 1).min(lines.len());
 
@@ -57,12 +56,13 @@ fn extract_snippet(path: &str, line: usize, context: usize) -> Option<String> {
     }
     Some(out)
 }
+
 pub fn build_payload(
     stderr: &str,
     signal_name: Option<&str>,
     context_lines: usize,
 ) -> Result<Contextpayload> {
-    let locations = extractall_locations(stderr);
+    let locations = extract_all_locations(stderr);
 
     let references: Vec<Reference> = locations
         .iter()
@@ -75,7 +75,7 @@ pub fn build_payload(
 
     let primary = references.first();
 
-    Ok(ContextPayload {
+    Ok(Contextpayload {
         file: primary.map(|r| r.file.clone()),
         line: primary.map(|r| r.line),
         extracted_snippet: primary.and_then(|r| r.snippet.clone()),

@@ -37,14 +37,15 @@ pub async fn explain_crash(payload: &Contextpayload, mock: bool) -> Result<Strin
         "contents": [{ "role": "user", "parts": [{ "text": user_content }] }]
     });
 
-    let client = request::Client::new();
+    let client = reqwest::Client::new();
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:streamGenerateContent?alt=sse&key={api_key}"
     );
 
     let response = client
         .post(&url)
-        .json(&body)
+        .header("Content-Type", "application/json")
+        .body(body.to_string())
         .send()
         .await
         .context("request to LLM gateway failed")?
@@ -75,50 +76,51 @@ async fn stream_mock(
     renderer: &mut StreamRenderer,
     raw: &mut String,
 ) -> Result<()> {
-let is_timeout = payload
-    .signalname
-    .as_deref()
-    .map(|s| s.starts_with("TIMEOUT"))
-    .unwrap_or(false);
+    let is_timeout = payload
+        .signal_name
+        .as_deref()
+        .map(|s| s.starts_with("TIMEOUT"))
+        .unwrap_or(false);
 
-let explanation = if is_timeout {
-    format!(
-        "## Summary\n\n\
-        The program did not exit on its own and was killed after a timeout \
-        (**{}**). This means it hung rather than crashed — no segfault, no \
-        abort, just no forward progress.\n\n\
-        ## Likely cause\n\n\
-        - An unconditional or incorrectly-bounded loop (e.g. a `while` \
-        condition that never flips false).\n\
-        - A blocking call waiting on something that never arrives — a lock \
-        that's never released, a read on a socket/pipe with nothing sent, \
-        or a channel recv with no matching send.\n\n\
-        ## Suggested fix\n\n\
-        - Re-run under a debugger (`gdb -p <pid>` while it's still hung, \
-        or attach then `Ctrl-C` + `bt`) to see exactly which line it's stuck on.\n\
-        - Add a loop-invariant assertion or iteration cap while debugging \
-        to fail fast instead of hanging.\n\
-        - If it's blocked on I/O or a lock, check for a missing signal/notify \
-        or a channel that's never closed.\n",
-        payload.signal_name.as_deref().unwrap_or("timeout"),
-    )
-} else {
-    format!(
-        "## Crash summary\n\n\
-        The program was killed by **{}** at `{}:{}`.\n\n\
-        ## Likely cause\n\n\
-        - The snippet around the crash site suggests a null or out-of-bounds \
-        pointer dereference — double check any pointer arithmetic or array \
-        indexing right before this line.\n\
-        - If this is user input driven, add a bounds check before the access.\n\n\
-        ## Suggested fix\n\n\
-        - Add a guard clause validating the pointer/index is in range.\n\
-        - Recompile with `-fsanitize=address` to pinpoint the exact faulting access.\n",
-        payload.signal_name.as_deref().unwrap_or("an unknown signal"),
-        payload.file.as_deref().unwrap_or("<unknown file>"),
-        payload.line.map(|l| l.to_string()).unwrap_or_else(|| "?".into()),
-    )
-};
+    let explanation = if is_timeout {
+        format!(
+            "## Summary\n\n\
+            The program did not exit on its own and was killed after a timeout \
+            (**{}**). This means it hung rather than crashed — no segfault, no \
+            abort, just no forward progress.\n\n\
+            ## Likely cause\n\n\
+            - An unconditional or incorrectly-bounded loop (e.g. a `while` \
+            condition that never flips false).\n\
+            - A blocking call waiting on something that never arrives — a lock \
+            that's never released, a read on a socket/pipe with nothing sent, \
+            or a channel recv with no matching send.\n\n\
+            ## Suggested fix\n\n\
+            - Re-run under a debugger (`gdb -p <pid>` while it's still hung, \
+            or attach then `Ctrl-C` + `bt`) to see exactly which line it's stuck on.\n\
+            - Add a loop-invariant assertion or iteration cap while debugging \
+            to fail fast instead of hanging.\n\
+            - If it's blocked on I/O or a lock, check for a missing signal/notify \
+            or a channel that's never closed.\n",
+            payload.signal_name.as_deref().unwrap_or("timeout"),
+        )
+    } else {
+        format!(
+            "## Crash summary\n\n\
+            The program was killed by **{}** at `{}:{}`.\n\n\
+            ## Likely cause\n\n\
+            - The snippet around the crash site suggests a null or out-of-bounds \
+            pointer dereference — double check any pointer arithmetic or array \
+            indexing right before this line.\n\
+            - If this is user input driven, add a bounds check before the access.\n\n\
+            ## Suggested fix\n\n\
+            - Add a guard clause validating the pointer/index is in range.\n\
+            - Recompile with `-fsanitize=address` to pinpoint the exact faulting access.\n",
+            payload.signal_name.as_deref().unwrap_or("an unknown signal"),
+            payload.file.as_deref().unwrap_or("<unknown file>"),
+            payload.line.map(|l| l.to_string()).unwrap_or_else(|| "?".into()),
+        )
+    };
+
     for chunk in chunk_words(&explanation, 4) {
         raw.push_str(&chunk);
         renderer.push(&chunk);
