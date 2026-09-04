@@ -18,7 +18,25 @@ pub struct ProcessResult {
 
 impl ProcessResult {
     pub fn crashed(&self) -> bool {
-        self.signal.is_some()
+        if self.signal.is_some() {
+            return true;
+        }
+
+        #[cfg(windows)]
+        {
+            matches!(
+                self.exit_code,
+                Some(-1073741819)
+                    | Some(-1073740791)
+                    | Some(-1073740762)
+                    | Some(-1073741816)
+            )
+        }
+
+        #[cfg(not(windows))]
+        {
+            false
+        }
     }
 
     pub fn hung(&self) -> bool {
@@ -39,7 +57,19 @@ impl ProcessResult {
             }
         }
 
+        #[cfg(windows)]
+        {
+            match self.exit_code {
+                Some(-1073741819) => Some("SIGSEGV (access violation / STATUS_ACCESS_VIOLATION)"),
+                Some(-1073740791) => Some("SIGABRT (abort / STATUS_FATAL_APP_EXIT)"),
+                Some(-1073740762) => Some("SIGILL (illegal instruction / STATUS_ILLEGAL_INSTRUCTION)"),
+                Some(-1073741816) => Some("SIGFPE (floating point exception / STATUS_FLOAT_DIVIDE_BY_ZERO)"),
+                _ => None,
+            }
+        }
+
         #[cfg(not(unix))]
+        #[cfg(not(windows))]
         {
             None
         }
@@ -101,4 +131,26 @@ pub async fn run_processed(path: &str, args: &[String], timeout_secs: u64) -> Re
         exit_code: if timed_out { None } else { status.code() },
         timed_out,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProcessResult;
+
+    #[test]
+    fn windows_access_violation_is_detected_as_a_crash() {
+        let result = ProcessResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            signal: None,
+            exit_code: Some(-1073741819),
+            timed_out: false,
+        };
+
+        assert!(result.crashed());
+        assert_eq!(
+            result.signal_name(),
+            Some("SIGSEGV (access violation / STATUS_ACCESS_VIOLATION)")
+        );
+    }
 }

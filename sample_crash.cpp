@@ -1,8 +1,11 @@
 #include <iostream>
 
 int main() {
-    int *ptr = nullptr;
-    std::cout << "about to crash...\n";
-    *ptr = 42;
+    int value = 42;
+    int *ptr = &value;
+
+    std::cout << "about to succeed...\n";
+    *ptr = 99;
+    std::cout << "value is " << *ptr << "\n";
     return 0;
 }
