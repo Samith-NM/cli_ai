@@ -1,6 +1,6 @@
 # CLI AI
 
-CLI AI is a Rust command-line tool that runs a target program in a sandbox, captures its output and crash details, and then explains the likely cause using the Gemini API.
+CLI AI is a Rust command-line tool that runs a target program in a sandbox, captures its output and crash details, and then explains the likely cause using the Gemini API(or any other api).
 
 It is designed for debugging native crashes, hangs, and abnormal exits by combining:
 
